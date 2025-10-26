@@ -7,7 +7,8 @@
 <style>
   html, body {
     height: 100%;
-    }   
+    overflow: hidden; /* ป้องกันหน้าเลื่อน */
+    }
   body {
     background: radial-gradient(circle at top, #1b1d3f, #0f1227);
     color: #fff;
@@ -15,44 +16,61 @@
     margin: 0;
     padding: 20px;
     text-align: center;
-    background-attachment: fixed; /* ✅ ทำให้พื้นหลังไม่ขยับเวลา scroll */
+    background-attachment: fixed; /* ทำให้พื้นหลังไม่ขยับเวลา scroll */
   }
   h1 {
     font-weight: 800;
     margin-bottom: 20px;
   }
+
+  /* ทำให้ #board เป็น "ผืนผ้าใบ" */
   #board {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 20px;
-    margin-top: 20px;
-  }
-  .polaroid {
     position: relative;
+    width: 100%;
+    height: calc(100vh - 160px);
+    overflow: hidden;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.02);
+    box-shadow: inset 0 0 15px rgba(0,0,0,0.3);
+  }
+
+  .polaroid {
+    position: absolute; /* สำคัญที่สุด! */
     background: #fff;
     color: #000;
     padding: 10px;
-    width: 180px;
+    width: 180px; /* ใช้ width นี้เป็นฐานในการคำนวณ scale */
     border-radius: 12px;
     box-shadow: 0 5px 20px rgba(0, 0, 0, 0.5);
-    transition: all 0.25s ease-in-out;
+    transition: box-shadow 0.25s ease, z-index 0.25s ease, transform 0.1s linear; /* เพิ่ม transition ให้ transform */
+    cursor: move; /* เพิ่ม cursor */
+    user-select: none; /* ป้องกันการเลือก text เวลาลาก */
   }
   .polaroid:hover {
-    transform: scale(1.05);
+    /* transform: none; */ /* เอาออกเพื่อให้ scale ทำงาน */
     box-shadow: 0 8px 25px rgba(255, 255, 255, 0.2);
+    z-index: 10; /* ให้มันลอยขึ้นมาเวลานาบ */
   }
+  /* เพิ่มคลาส .dragging */
+  .polaroid.dragging {
+    z-index: 99;
+    box-shadow: 0 15px 40px rgba(0, 0, 0, 0.7);
+    transition: none; /* ปิด transition ตอนลากสดๆ */
+  }
+
   .polaroid img {
     width: 100%;
     border-radius: 10px;
     display: block;
+    pointer-events: none; /* ป้องกันไม่ให้รูปภาพขวางการ drag */
   }
   .caption {
     margin-top: 8px;
     font-size: 0.9rem;
     text-align: center;
+    pointer-events: none; /* ป้องกันไม่ให้ text ขวางการ drag */
   }
-  /* ปุ่มลบจะซ่อนจน hover */
+  /* ปุ่มลบ */
   .delete-btn {
     position: absolute;
     top: -30px;
@@ -77,6 +95,9 @@
   .delete-btn:hover {
     background: rgba(255, 0, 0, 0.95);
   }
+
+  /* ลบ .resize-handle */
+
   button {
     margin-top: 25px;
     padding: 10px 18px;
@@ -157,7 +178,6 @@
 <h1>💫 Fortune Board</h1>
 <div id="board"></div>
 <button onclick="window.location='index.html'">กลับไปดูดวงเพิ่ม 🔮</button>
-<!-- ✅ Popup แสดงภาพใหญ่และคำทำนาย -->
 <div id="previewPopup">
   <div class="popup-content">
     <img id="previewImg" src="" alt="Preview">
@@ -168,19 +188,79 @@
 </div>
 <script>
 const board = document.getElementById("board");
+const popup = document.getElementById("previewPopup");
+const closePopupBtn = document.getElementById("closePopup");
 
 function loadBoard() {
-  const data = JSON.parse(localStorage.getItem("polaroids") || "[]").slice().reverse();
+  // ไม่ต้องเช็ค isInteracting เพราะไม่มี setInterval แล้ว
+  // const isInteracting = document.querySelector('.polaroid.dragging, .polaroid.resizing');
+  // if (isInteracting) { return; }
+
+  const allData = JSON.parse(localStorage.getItem("polaroids") || "[]");
+  const data = allData.slice().reverse(); // .reverse() เพื่อให้ใหม่สุดอยู่บน
   board.innerHTML = "";
   if (data.length === 0) {
     board.innerHTML = "<p>ยังไม่มีรูปดูดวงเลย 🥺</p>";
     return;
   }
 
+  const boardRect = board.getBoundingClientRect();
+
   data.forEach((c, i) => {
     const card = document.createElement("div");
     card.className = "polaroid";
-    card.style.setProperty("--r", Math.random());
+    const originalIndex = (allData.length - 1) - i; // หา index ต้นฉบับก่อน
+    card.dataset.index = originalIndex;
+
+    // เช็คและบันทึกค่าสุ่มครั้งแรก
+    let needsUpdate = false; // Flag ไว้เช็คว่าต้องเซฟค่าสุ่มไหม
+    let propertiesToUpdate = {};
+
+    let rotation = c.rotation;
+    if (rotation === undefined || rotation === null) {
+        rotation = (Math.random() - 0.5) * 10; // สุ่ม -5 ถึง +5 องศา
+        propertiesToUpdate.rotation = rotation;
+        needsUpdate = true;
+    }
+
+    let scale = c.scale || 1.0; // scale มีค่า default อยู่แล้ว ไม่ต้องสุ่ม
+
+    let top = c.top;
+    if (top === undefined || top === null) {
+        top = Math.random() * (boardRect.height - 250); // สุ่มตำแหน่ง Top
+        propertiesToUpdate.top = top;
+        needsUpdate = true;
+    }
+
+    let left = c.left;
+    if (left === undefined || left === null) {
+        left = Math.random() * (boardRect.width - 180); // สุ่มตำแหน่ง Left
+        propertiesToUpdate.left = left;
+        needsUpdate = true;
+    }
+
+    // ถ้ามีการสุ่มค่าใหม่ -> บันทึกลง localStorage ทันที
+    if (needsUpdate) {
+        updateStorage(originalIndex, propertiesToUpdate);
+    }
+
+    // จำกัดไม่ให้ตกขอบ (ใช้ค่าที่ได้มา ไม่ว่าจะเป็นค่าเก่าหรือค่าสุ่ม)
+    // ⭐️ [แก้ไข] คำนวณขอบเขตโดยใช้ scale
+    const currentHeight = (180 / 0.837) * scale; // ประมาณอัตราส่วน width/height ของ polaroid
+    const currentWidth = 180 * scale;
+    top = Math.max(0, Math.min(top, boardRect.height - currentHeight - 10)); // เผื่อ padding
+    left = Math.max(0, Math.min(left, boardRect.width - currentWidth - 10)); // เผื่อ padding
+
+    // ⭐️ [แก้ไข] กลับไปใช้ transform scale
+    // const initialWidth = 180 * scale;
+    // card.style.width = `${initialWidth}px`;
+    card.style.transform = `rotate(${rotation}deg) scale(${scale})`;
+    card.style.width = `180px`; // ใช้ width คงที่
+    card.style.top = `${top}px`;
+    card.style.left = `${left}px`;
+
+
+    // ⭐️ [แก้ไข] ลบ .resize-handle ออก
     card.innerHTML = `
       <button class="delete-btn" title="ลบรูปนี้">×</button>
       <img src="${c.img}">
@@ -190,15 +270,21 @@ function loadBoard() {
     // ปุ่มลบ
     card.querySelector(".delete-btn").onclick = (e) => {
       e.stopPropagation();
-      const originalData = JSON.parse(localStorage.getItem("polaroids") || "[]");
-      originalData.splice(originalData.length - 1 - i, 1);
-      localStorage.setItem("polaroids", JSON.stringify(originalData));
-      loadBoard();
+      if (confirm("แน่ใจนะว่าจะลบรูปนี้?")) {
+        const originalData = JSON.parse(localStorage.getItem("polaroids") || "[]");
+        originalData.splice(originalIndex, 1); // ใช้ originalIndex
+        localStorage.setItem("polaroids", JSON.stringify(originalData));
+        loadBoard(); // โหลดใหม่
+      }
     };
 
-    // ✅ คลิกการ์ด = เปิด popup
+    // คลิกการ์ด = เปิด popup
     card.onclick = () => {
-      const popup = document.getElementById("previewPopup");
+      // ⭐️ [แก้ไข] ลบเช็ค .wasResizing
+      if (card.dataset.wasDragging === 'true') {
+        card.dataset.wasDragging = 'false';
+        return;
+      }
       document.getElementById("previewImg").src = c.img;
       document.getElementById("previewCaption").textContent = c.text || "(ไม่มีแคปชัน)";
       document.getElementById("previewFortune").textContent = c.fortune || "✨ ยังไม่มีคำทำนายแนบมากับรูปนี้ ✨";
@@ -206,18 +292,139 @@ function loadBoard() {
     };
 
     board.appendChild(card);
+
+    // เรียกฟังก์ชันลาก/ย่อขยาย
+    makeInteractable(card, originalIndex);
   });
 }
 
+// ฟังก์ชันสำหรับอัปเดต localStorage
+function updateStorage(index, properties) {
+    const data = JSON.parse(localStorage.getItem("polaroids") || "[]");
+    if (data[index]) {
+        // อัปเดต properties
+        Object.assign(data[index], properties);
+        localStorage.setItem("polaroids", JSON.stringify(data));
+    }
+}
+
+// ⭐️ [แก้ไข] แก้ไขฟังก์ชันนี้ทั้งหมด กลับไปใช้ Wheel Event
+function makeInteractable(card, index) {
+    // --- ส่วนที่ 1: การลาก (Drag) ---
+    card.addEventListener("mousedown", (e) => {
+        // ไม่ลาก ถ้าคลิกปุ่มลบ
+        if (e.target.classList.contains("delete-btn")) {
+          return;
+        }
+
+        card.dataset.wasDragging = 'false';
+        // card.dataset.wasResizing = 'false'; // ไม่ต้องใช้แล้ว
+        card.classList.add("dragging");
+
+        const offsetX = e.clientX - card.getBoundingClientRect().left;
+        const offsetY = e.clientY - card.getBoundingClientRect().top;
+
+        function onMouseMove(e) {
+            if (!card.classList.contains("dragging")) return;
+            e.preventDefault();
+
+            card.dataset.wasDragging = 'true';
+
+            let newLeft = e.clientX - board.getBoundingClientRect().left - offsetX;
+            let newTop = e.clientY - board.getBoundingClientRect().top - offsetY;
+
+            // ⭐️ [แก้ไข] คำนวณขอบเขตโดยใช้ scale จาก transform
+            let currentScale = 1.0;
+            const transform = card.style.transform || "";
+            const scaleMatch = transform.match(/scale\(([^)]+)\)/);
+            if (scaleMatch && scaleMatch[1]) {
+                currentScale = parseFloat(scaleMatch[1]);
+            }
+            const currentHeight = (180 / 0.837) * currentScale;
+            const currentWidth = 180 * currentScale;
+
+            newLeft = Math.max(0, Math.min(newLeft, board.clientWidth - currentWidth));
+            newTop = Math.max(0, Math.min(newTop, board.clientHeight - currentHeight));
+
+
+            card.style.left = `${newLeft}px`;
+            card.style.top = `${newTop}px`;
+        }
+
+        function onMouseUp() {
+            card.classList.remove("dragging");
+            document.removeEventListener("mousemove", onMouseMove);
+            document.removeEventListener("mouseup", onMouseUp);
+
+            if (card.dataset.wasDragging === 'true') {
+              updateStorage(index, {
+                  top: parseFloat(card.style.top),
+                  left: parseFloat(card.style.left)
+              });
+            }
+        }
+
+        document.addEventListener("mousemove", onMouseMove);
+        document.addEventListener("mouseup", onMouseUp);
+    });
+
+    // --- ⭐️ [แก้ไข] ส่วนที่ 2: การย่อขยาย (Scale/Resize) ด้วยล้อเมาส์ ---
+    card.addEventListener("wheel", (e) => {
+        e.preventDefault(); // หยุดไม่ให้หน้าเว็บ scroll
+
+        // อ่านค่า scale และ rotation ปัจจุบัน
+        const transform = card.style.transform || "";
+        let scale = 1.0;
+        let rotation = 0;
+
+        const scaleMatch = transform.match(/scale\(([^)]+)\)/);
+        if (scaleMatch && scaleMatch[1]) {
+            scale = parseFloat(scaleMatch[1]);
+        }
+        const rotationMatch = transform.match(/rotate\(([^)]+)deg\)/);
+        if (rotationMatch && rotationMatch[1]) {
+            rotation = parseFloat(rotationMatch[1]);
+        }
+
+        // ปรับ scale
+        const scaleAmount = 0.05;
+        if (e.deltaY < 0) {
+            // หมุนขึ้น = ขยาย
+            scale += scaleAmount;
+        } else {
+            // หมุนลง = ย่อ
+            scale -= scaleAmount;
+        }
+
+        // จำกัดขนาด
+        scale = Math.max(0.5, Math.min(scale, 2.5)); // ย่อสุด 50%, ขยายสุด 250%
+
+        card.style.transform = `rotate(${rotation}deg) scale(${scale})`;
+
+        // [สำคัญ] บันทึกขนาดลง Storage ทันที
+        updateStorage(index, { scale: scale });
+    });
+}
+// ⭐️ [จบส่วนแก้ไข]
+
 // ปิด popup
-document.getElementById("closePopup").onclick = () => {
-  document.getElementById("previewPopup").style.display = "none";
+closePopupBtn.onclick = () => {
+  popup.style.display = "none";
 };
 
-
-// โหลดทุกครั้ง + auto refresh ทุก 3 วิ
+// โหลดครั้งเดียวตอนเปิดหน้า
 loadBoard();
-setInterval(loadBoard, 3000);
+
+// ฟังการเปลี่ยนแปลงใน localStorage จากแท็บอื่น
+window.addEventListener('storage', (event) => {
+  // เช็คว่า key ที่เปลี่ยนคือ 'polaroids' หรือไม่ (สำคัญมาก!)
+  if (event.key === 'polaroids') {
+    console.log('localStorage "polaroids" changed! Reloading board...');
+    loadBoard(); // ถ้าใช่ -> โหลดบอร์ดใหม่ทันที
+  }
+});
+
+// ไม่ต้องมี setInterval แล้ว
 </script>
 
 
